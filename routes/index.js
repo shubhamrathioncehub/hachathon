@@ -1,88 +1,201 @@
-var express = require('express');
+var express = require("express");
 var router = express.Router();
+var { WebhookClient } = require("dialogflow-fulfillment");
+const { Card, Suggestion } = require("dialogflow-fulfillment");
+const fetch = require("node-fetch");
 
-const fetch = require('node-fetch');
+const userData = {};
 
-router.post('/getLandingPage', async function (req, res, next) {
-  let res1_1 = await fetch('https://starkproxy.staticso2.com/get-data/GetLandingPageLayout', {
-    method: 'POST',
-    body: JSON.stringify({ linkName: req.body.queryResult.parameters.bookingpagename || '' }),
-    headers: {
-      'Content-Type': 'application/json',
-      "Authorization": "Basic " + Buffer.from("starkqa:starkqa@123").toString("base64")
-    }
-  })
-  let res1_2 = await res1_1.json();
+function updateUserData(sessionId, key, value) {
+  if (!userData[sessionId]) userData[sessionId] = {};
+  userData[sessionId][key] = value;
+}
 
-  let res2_1 = await fetch('https://starkproxy.staticso2.com/get-data/GetSettingsDetail', {
-    method: 'POST',
-    body: JSON.stringify(
+function getUserData(sessionId) {
+  return userData[sessionId] || null;
+}
+
+function deleteUserData(sessionId) {
+  if (!userData[sessionId]) delete userData[sessionId];
+}
+
+router.post("/webhooks", async function(req, res, next) {
+  try {
+    console.log("******************************");
+    console.log("session: ", req.body.session);
+    console.log("responseId: ", req.body.responseId);
+    console.log("queryResult: ", req.body.queryResult);
+    console.log("******************************");
+
+    let bookingPageResponse = await fetch(
+      "https://starkproxy.staticso2.com/get-data/GetLandingPageLayout",
       {
-        "pooledType": res1_2.PooledAvailabilityType,
-        "timeZoneId": 95,
-        "userId": res1_2.userId,
-        "settingsId": res1_2.settingsId,
-        "meetmelinkid": res1_2.meetmeLinkId,
-        "startDate": 1577910600000,
-        "endDate": 1580581799999,
-        "serviceId": res1_2.serviceId || -1,
-        "teamId": res1_2.team
-      }
-    ),
-    headers: {
-      'Content-Type': 'application/json',
-      "Authorization": "Basic " + Buffer.from("starkqa:starkqa@123").toString("base64")
-    }
-  });
-  let res2_2 = await res2_1.json();
-  // let result = res2_2.serviceDetails.map(val => {
-  //   return {
-  //     serviceName: val.serviceName,
-  //     serviceDuration: val.serviceDuration
-  //   }
-  // });
-  // return res.status(200).json(result);
-
-  let result = {
-    "fulfillmentText": "This is a text response",
-    "fulfillmentMessages": [
-      {
-        "card": {
-          "title": "card title",
-          "subtitle": "card text",
-          "imageUri": "https://assistant.google.com/static/images/molecule/Molecule-Formation-stop.png",
-          "buttons": [
-            {
-              "text": "button text",
-              "postback": "https://assistant.google.com/"
-            }
-          ]
+        method: "POST",
+        body: JSON.stringify({
+          linkName: req.body.queryResult.parameters.bookingpagename || ""
+        }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization:
+            "Basic " + Buffer.from("starkqa:starkqa@123").toString("base64")
         }
       }
-    ],
-    "source": "example.com",
-    "payload": {
-    },
-    "outputContexts": [
+    );
+    let bookingPageDetail = await bookingPageResponse.json();
+    const agent = new WebhookClient({ request: req, response: res });
+
+    function checkBookingPageHandler(agent) {
+      updateUserData(
+        req.body.session,
+        "bookingpagename",
+        req.body.queryResult.parameters.bookingpagename || "Booking Page Name"
+      );
+      agent.add(`When you would like to schedule meeting?`);
+      agent.setContext({
+        name: "bookingPage",
+        lifespan: 10,
+        parameters: {
+          bookingPage: req.body.queryResult.parameters.bookingpagename
+        }
+      });
+    }
+
+    function getTimeslotForDate(agent) {
+      updateUserData(
+        req.body.session,
+        "date",
+        req.body.queryResult.parameters.date || ""
+      );
+      agent.add("Following are the available timeslots: ");
+      agent.add(new Suggestion(`4:00 AM`));
+      agent.add(new Suggestion(`5:00 AM`));
+      agent.add(new Suggestion(`6:00 AM`));
+    }
+
+    function getName(agent) {
+      updateUserData(
+        req.body.session,
+        "name",
+        req.body.queryResult.parameters.any || "User Name"
+      );
+      agent.add("Please tell me your name");
+    }
+
+    function getEmail(agent) {
+      updateUserData(
+        req.body.session,
+        "email",
+        req.body.queryResult.parameters.any || "User Email"
+      );
+      agent.add("Please tell me your email");
+    }
+
+    function preparePostData(data) {
+      return {
+        name: data.name,
+        message: data.message,
+        timezone: data.timezone,
+        email: data.email,
+        subject: `meeting with ${name}`,
+        duration: data.duration,
+        meetingtimes: data.meetingtimes,
+        postBuffer: data.postBuffer,
+        preBuffer: data.preBuffer,
+        meetinglowerboundary: data.meetinglowerboundary,
+        meetingupperboundary: data.meetingupperboundary,
+        customfield: data.customfield
+      };
+    }
+
+    function createPostdata() {
+      return {
+        postData: preparePostData(),
+        sid: data.sid,
+        userId: data.userId,
+        meetmeLinkId: data.meetmeLinkId,
+        serviceId: -1,
+        serviceCategoryId: "",
+        bookingPageCategoryId: "",
+        IFParams: {},
+        salesForceBooking: null,
+        bid: null,
+        sn: -1,
+        themeId: themeId,
+        e: false,
+        categorySkippedStatus: -1,
+        OneTimeLinkId: null
+      };
+    }
+
+    function bookSlot(agent) {
+      let userData = getUserData(req.body.session);
+      console.log("userData: ", userData);
+      deleteUserData(req.body.session);
+
+      // const conv = agent.conv();
+      agent.add("Your slot has been booked.");
+    }
+
+    let intentMap = new Map();
+    intentMap.set(
+      req.body.queryResult.intent.displayName,
+      req.body.queryResult.intent.displayName.includes("booking page")
+        ? checkBookingPageHandler
+        : (req.body.queryResult.intent.displayName,
+          req.body.queryResult.intent.displayName.includes("timeslot - time"))
+        ? getName
+        : (req.body.queryResult.intent.displayName,
+          req.body.queryResult.intent.displayName.includes("booking form name"))
+        ? getEmail
+        : (req.body.queryResult.intent.displayName,
+          req.body.queryResult.intent.displayName.includes(
+            "booking form email"
+          ))
+        ? bookSlot
+        : getTimeslotForDate
+    );
+    agent.handleRequest(intentMap);
+  } catch (e) {
+    console.log(e);
+  }
+});
+
+router.post("/timeslot", async (request, response) => {
+  try {
+    let bookingPageResponse = await fetch(
+      "https://starkproxy.staticso2.com/get-data/calc-ts",
       {
-        // "name": "projects/${PROJECT_ID}/agent/sessions/${SESSION_ID}/contexts/context name",
-        "name": req.body.session,
-        "lifespanCount": 5,
-        "parameters": {
-          "param": "param value"
+        method: "POST",
+        body: JSON.stringify({
+          linkName: req.body.queryResult.parameters.bookingpagename || ""
+        }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization:
+            "Basic " + Buffer.from("starkqa:starkqa@123").toString("base64")
         }
       }
-    ],
-    "followupEventInput": {
-      "name": "event name",
-      "languageCode": "en-US",
-      "parameters": {
-        "param": "param value"
-      }
-    }
-  };
+    );
+    let bookingPageDetail = await bookingPageResponse.json();
+    const agent = new WebhookClient({ request: req, response: res });
 
-  return res.status(200).json(result);
+    function yourFunctionHandler(agent) {
+      agent.add(`When you would like to schedule meeting?`);
+      agent.setContext({
+        name: "bookingPage",
+        lifespan: 10,
+        parameters: {
+          bookingPage: req.body.queryResult.parameters.bookingpagename
+        }
+      });
+    }
+
+    let intentMap = new Map();
+    intentMap.set("booking page link", yourFunctionHandler);
+    agent.handleRequest(intentMap);
+  } catch (e) {
+    console.log(e);
+  }
 });
 
 module.exports = router;
