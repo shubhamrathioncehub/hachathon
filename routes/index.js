@@ -35,13 +35,15 @@ router.post('/getLandingPage', async function (req, res, next) {
     }
   });
   let res2_2 = await res2_1.json();
-  let result = res2_2.serviceDetails.map(val => {
-    return {
-      serviceName: val.serviceName,
-      serviceDuration: val.serviceDuration
-    }
-  });
-  return res.status(200).json(result);
+  // let result = res2_2.serviceDetails.map(val => {
+  //   return {
+  //     serviceName: val.serviceName,
+  //     serviceDuration: val.serviceDuration
+  //   }
+  // });
+  // return res.status(200).json(result);
+
+  return res.status(200).json(res2_2);
 });
 
 module.exports = router;
