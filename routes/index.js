@@ -6,7 +6,7 @@ const fetch = require('node-fetch');
 router.post('/getLandingPage', async function (req, res, next) {
   let res1_1 = await fetch('https://starkproxy.staticso2.com/get-data/GetLandingPageLayout', {
     method: 'POST',
-    body: JSON.stringify({ linkName: req.body.linkName || '' }),
+    body: JSON.stringify({ linkName: req.body.queryResult.parameters.bookingpagename || '' }),
     headers: {
       'Content-Type': 'application/json',
       "Authorization": "Basic " + Buffer.from("starkqa:starkqa@123").toString("base64")
@@ -43,7 +43,46 @@ router.post('/getLandingPage', async function (req, res, next) {
   // });
   // return res.status(200).json(result);
 
-  return res.status(200).json(res2_2);
+  let result = {
+    "fulfillmentText": "This is a text response",
+    "fulfillmentMessages": [
+      {
+        "card": {
+          "title": "card title",
+          "subtitle": "card text",
+          "imageUri": "https://assistant.google.com/static/images/molecule/Molecule-Formation-stop.png",
+          "buttons": [
+            {
+              "text": "button text",
+              "postback": "https://assistant.google.com/"
+            }
+          ]
+        }
+      }
+    ],
+    "source": "example.com",
+    "payload": {
+    },
+    "outputContexts": [
+      {
+        // "name": "projects/${PROJECT_ID}/agent/sessions/${SESSION_ID}/contexts/context name",
+        "name": req.body.session,
+        "lifespanCount": 5,
+        "parameters": {
+          "param": "param value"
+        }
+      }
+    ],
+    "followupEventInput": {
+      "name": "event name",
+      "languageCode": "en-US",
+      "parameters": {
+        "param": "param value"
+      }
+    }
+  };
+
+  return res.status(200).json(result);
 });
 
 module.exports = router;
