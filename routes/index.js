@@ -19,37 +19,39 @@ function deleteUserData(sessionId) {
   if (!userData[sessionId]) delete userData[sessionId];
 }
 
-router.post("/webhooks", async function(req, res, next) {
+router.post("/webhooks", function(req, res, next) {
   try {
-    console.log("******************************");
-    console.log("session: ", req.body.session);
-    console.log("responseId: ", req.body.responseId);
-    console.log("queryResult: ", req.body.queryResult);
-    console.log("******************************");
-
-    let bookingPageResponse = await fetch(
-      "https://starkproxy.staticso2.com/get-data/GetLandingPageLayout",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          linkName: req.body.queryResult.parameters.bookingpagename || ""
-        }),
-        headers: {
-          "Content-Type": "application/json",
-          Authorization:
-            "Basic " + Buffer.from("starkqa:starkqa@123").toString("base64")
-        }
-      }
-    );
-    let bookingPageDetail = await bookingPageResponse.json();
     const agent = new WebhookClient({ request: req, response: res });
 
-    function checkBookingPageHandler(agent) {
-      updateUserData(
-        req.body.session,
-        "bookingpagename",
-        req.body.queryResult.parameters.bookingpagename || "Booking Page Name"
+    async function checkBookingPageHandler(agent) {
+      let bookingPageResponse = await fetch(
+        "https://starkproxy.staticso2.com/get-data/GetLandingPageLayout",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            linkName: req.body.queryResult.parameters.bookingpagename || ""
+          }),
+          headers: {
+            "Content-Type": "application/json",
+            Authorization:
+              "Basic " + Buffer.from("starkqa:starkqa@123").toString("base64")
+          }
+        }
       );
+      if (bookingPageResponse.status === 404) {
+        agent.add("Invalid booking Page.");
+        return agent.add(
+          "Which booking page would you like to book a meeting with?"
+        );
+      }
+      let bookingPageDetail = await bookingPageResponse.json();
+      if (bookingPageDetail.userProfileObjMin.profileStatus !== 1) {
+        agent.add("Invalid booking Page.");
+        return agent.add(
+          "Which booking page would you like to book a meeting with?"
+        );
+      }
+      updateUserData(req.body.session, "bookingPageDetail", bookingPageDetail);
       agent.add(`When you would like to schedule meeting?`);
       agent.setContext({
         name: "bookingPage",
@@ -60,16 +62,61 @@ router.post("/webhooks", async function(req, res, next) {
       });
     }
 
-    function getTimeslotForDate(agent) {
-      updateUserData(
-        req.body.session,
-        "date",
-        req.body.queryResult.parameters.date || ""
-      );
-      agent.add("Following are the available timeslots: ");
-      agent.add(new Suggestion(`4:00 AM`));
-      agent.add(new Suggestion(`5:00 AM`));
-      agent.add(new Suggestion(`6:00 AM`));
+    async function getTimeslotForDate(agent) {
+      try {
+        updateUserData(
+          req.body.session,
+          "date",
+          req.body.queryResult.parameters.date || ""
+        );
+
+        let date = new Date(req.body.queryResult.parameters.date);
+        let [yyyy, MM, dd] = date
+          .toJSON()
+          .slice(0, 10)
+          .split("-");
+        let bookingPageDetail = getUserData(req.body.session).bookingPageDetail;
+        let timeslotResponse = await fetch(
+          "https://starkproxy.staticso2.com/get-availability/calc-ts",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              pooledType: bookingPageDetail.PooledAvailabilityType,
+              timeZoneId: 122,
+              userId: bookingPageDetail.userId,
+              settingsId: bookingPageDetail.settingsId,
+              meetmelinkid: bookingPageDetail.meetmeLinkId,
+              startDate: new Date(`${MM}-${dd}-${yyyy}`).getTime(),
+              endDate: new Date(`${MM}-${dd}-${yyyy} 11:59:59`).getTime(),
+              serviceId: bookingPageDetail.serviceId || -1,
+              teamId: bookingPageDetail.team
+            }),
+            headers: {
+              "Content-Type": "application/json",
+              Origin: "https://starkcf.staticso2.com",
+              Authorization:
+                "Basic " + Buffer.from("starkqa:starkqa@123").toString("base64")
+            }
+          }
+        );
+
+        let timeslot = await timeslotResponse.json();
+
+        agent.add("Following are the available timeslots: ");
+        let slots =
+          timeslot.data.slots[
+            `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
+          ];
+        if (slots.am.length > 0) {
+          for (let i = 0; i < slots.am.length && i < 8; i++)
+            agent.add(new Suggestion(slots.am[i].timeStr));
+        } else {
+          for (let i = 0; i < slots.pm.length && i < 8; i++)
+            agent.add(new Suggestion(slots.pm[i].timeStr));
+        }
+      } catch (e) {
+        console.log(e);
+      }
     }
 
     function getName(agent) {
@@ -137,23 +184,11 @@ router.post("/webhooks", async function(req, res, next) {
     }
 
     let intentMap = new Map();
-    intentMap.set(
-      req.body.queryResult.intent.displayName,
-      req.body.queryResult.intent.displayName.includes("booking page")
-        ? checkBookingPageHandler
-        : (req.body.queryResult.intent.displayName,
-          req.body.queryResult.intent.displayName.includes("timeslot - time"))
-        ? getName
-        : (req.body.queryResult.intent.displayName,
-          req.body.queryResult.intent.displayName.includes("booking form name"))
-        ? getEmail
-        : (req.body.queryResult.intent.displayName,
-          req.body.queryResult.intent.displayName.includes(
-            "booking form email"
-          ))
-        ? bookSlot
-        : getTimeslotForDate
-    );
+    intentMap.set("booking page link", checkBookingPageHandler);
+    intentMap.set("timeslot - date", getTimeslotForDate);
+    intentMap.set("timeslot - time", getName);
+    intentMap.set("booking form name", getEmail);
+    intentMap.set("booking form email", bookSlot);
     agent.handleRequest(intentMap);
   } catch (e) {
     console.log(e);
